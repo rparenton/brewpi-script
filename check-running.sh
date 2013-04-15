@@ -26,7 +26,7 @@ while read line; do
     declare "$(echo $var)=$(echo $val)"
 done < $configFile
 
-if [ "$(ps ax | grep -v grep | grep brewpi.py)" != "" ]; then
+if [ "$(ps ax | grep -v grep | grep brewpi.py | grep $configFile)" != "" ]; then
     echo "brewpi running, everything is fine"
     exit 0
 else
