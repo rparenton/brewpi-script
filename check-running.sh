@@ -1,24 +1,33 @@
 #!/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/games:/usr/games
 
-# Set config file
+# Set base path
 if [ "$#" -eq 0 ]; then
-    configFile=/home/brewpi/settings/config.cfg
-    if [ ! -f $configFile ]; then
-        echo "ERROR: Config file \"${configFile}\" does not exist."
-        echo "Specify the config file by running \"check-running.sh <config file full path>\"."
-        exit 1
-    fi
+    basePath=/home/brewpi/
 else
-    configFile=$1
-    if [ ! -f $configFile ]; then
-        echo "ERROR: Config file \"${configFile}\" does not exist."
-        echo "Please specify the full path to a valid config file."
-        exit 1
-    fi
+    basePath=$1
 fi
 
-# Read in config file
+# Define config files
+defaultConfigFile="${basePath}settings/defaults.cfg"
+userConfigFile="${basePath}settings/config.cfg"
+
+# Make sure config files exist
+if [ ! -f $defaultConfigFile ]; then
+    echo "ERROR: Config file \"${defaultConfigFile}\" does not exist."
+    echo "Verify the file exists and/or specify the full path to a valid BrewPi directory by running:"
+    echo "  check-running.sh <base directory full path>"
+    exit 1
+fi
+
+if [ ! -f $userConfigFile ]; then
+    echo "ERROR: Config file \"${userConfigFile}\" does not exist."
+    echo "Verify the file exists and/or specify the full path to a valid BrewPi directory by running:"
+    echo "  check-running.sh <base directory full path>"
+    exit 1
+fi
+
+# Read in config files (defaults.cfg first, then config.cfg for user overrides)
 while read line; do
     if [ -z "$line" ]; then continue; fi
     var=$(echo $line | cut -d '=' -f1)
@@ -26,9 +35,18 @@ while read line; do
     value=$(echo $val) # remove whitespace around =
     variable=$(echo $var) 
     eval "$variable=\"$value\""
-done < $configFile
+done < $defaultConfigFile
 
-if [ "$(ps ax | grep -v grep | grep brewpi.py | grep $configFile)" != "" ]; then
+while read line; do
+    if [ -z "$line" ]; then continue; fi
+    var=$(echo $line | cut -d '=' -f1)
+    val=$(echo $line | cut -d '=' -f2)
+    value=$(echo $val) # remove whitespace around =
+    variable=$(echo $var) 
+    eval "$variable=\"$value\""
+done < $userConfigFile
+
+if [ "$(ps ax | grep -v grep | grep brewpi.py | grep $basePath)" != "" ]; then
     echo "brewpi running, everything is fine"
     exit 0
 else
@@ -41,7 +59,7 @@ else
             echo "brewpi script not found running by CRON, restarting brewpi" >> ${scriptPath}logs/stderr.txt
             # overwrite stdout, append to stderr
             # -u flag causes stdout to write to file immediately and not cache output
-            python -u ${scriptPath}brewpi.py $configFile 1> ${scriptPath}logs/stdout.txt 2>>${scriptPath}logs/stderr.txt &
+            python -u ${scriptPath}brewpi.py $basePath 1> ${scriptPath}logs/stdout.txt 2>>${scriptPath}logs/stderr.txt &
         else
             uptime=$(cat /proc/uptime)
             uptime=${uptime%%.*}
