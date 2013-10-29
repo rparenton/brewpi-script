@@ -23,23 +23,15 @@ import BrewPiUtil as util
 
 # Read in command line arguments
 if len(sys.argv) < 2:
-        print >> sys.stderr, 'Using default base directory ./, to override use:  %s <base directory full path>' % sys.argv[0]
-        basePath = './'
-else:
-        basePath = sys.argv[1]
+        sys.exit('Usage: %s <config file full path>' % sys.argv[0])
+if not os.path.exists(sys.argv[1]):
+        sys.exit('ERROR: Config file "%s" was not found!' % sys.argv[1])
 
-defaultConfigFile = basePath + 'settings/defaults.cfg'
-userConfigFile = basePath + 'settings/config.cfg'
+configFile = sys.argv[1]
+config = ConfigObj(configFile)
 
-if not os.path.exists(defaultConfigFile):
-        sys.exit('ERROR: Config file "%s" was not found!' % defaultConfigFile)
-if not os.path.exists(userConfigFile):
-        sys.exit('ERROR: Config file "%s" was not found!' % userConfigFile)
-
-defaultConfig = ConfigObj(defaultConfigFile)
-userConfig = ConfigObj(userConfigFile)
-config = defaultConfig
-config.merge(userConfig)
+# global variables, will be initialized by startBeer()
+util.readCfgWithDefaults(configFile)
 
 hexFile = config['wwwPath'] + 'uploads/brewpi-leonardo-revA.hex'
 boardType = config['boardType']
