@@ -41,12 +41,9 @@ userConfig = ConfigObj(userConfigFile)
 config = defaultConfig
 config.merge(userConfig)
 
-# global variables, will be initialized by startBeer()
-util.readCfgWithDefaults(configFile)
-
 hexFile = config['wwwPath'] + 'uploads/brewpi-leonardo-revA.hex'
 boardType = config['boardType']
 
-result = programmer.programArduino(config, boardType, hexFile, {'settings': True, 'devices': True})
+result = programmer.programArduino(config, boardType, hexFile, {'settings': False, 'devices': False})
 
 print result
