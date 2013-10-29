@@ -28,10 +28,6 @@ pip-log.txt
 
 start.bat
 
-# make sure an empty logs directory is created
-logs/
-!.gitignore
 sftp-config.json
-brewpi-script.iml
 requirements.txt
-settings/tempProfile.csv.old
+!.gitignore
