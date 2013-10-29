@@ -23,9 +23,9 @@ import BrewPiUtil as util
 
 # Read in command line arguments
 if len(sys.argv) < 2:
-        sys.exit('Usage: %s <config file full path>' % sys.argv[0])
+	sys.exit('Usage: %s <config file full path>' % sys.argv[0])
 if not os.path.exists(sys.argv[1]):
-        sys.exit('ERROR: Config file "%s" was not found!' % sys.argv[1])
+	sys.exit('ERROR: Config file "%s" was not found!' % sys.argv[1])
 
 configFile = sys.argv[1]
 config = ConfigObj(configFile)
