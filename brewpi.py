@@ -29,6 +29,7 @@ import getopt
 from pprint import pprint
 import shutil
 import traceback
+import urllib
 
 # load non standard packages, exit when they are not installed
 try:
@@ -53,7 +54,7 @@ import temperatureProfile
 import programArduino as programmer
 import brewpiJson
 import BrewPiUtil as util
-from brewpiVersion import AvrInfo
+import brewpiVersion
 import pinList
 import expandLogMessage
 import BrewPiProcess
@@ -62,7 +63,7 @@ import BrewPiProcess
 # Settings will be read from Arduino, initialize with same defaults as Arduino
 # This is mainly to show what's expected. Will all be overwritten on the first update from the arduino
 
-compatibleBrewpiVersion = "0.2.3"
+compatibleHwVersion = "0.2.4"
 
 # Control Settings
 cs = dict(mode='b', beerSet=20.0, fridgeSet=20.0, heatEstimator=0.2, coolEstimator=5)
@@ -222,8 +223,7 @@ def changeWwwSetting(settingName, value):
     wwwSettingsFile.truncate()
     wwwSettingsFile.close()
 
-
-def startBeer(beerName):
+def setFiles():
     global config
     global localJsonFileName
     global localCsvFileName
@@ -232,38 +232,47 @@ def startBeer(beerName):
     global lastDay
     global day
 
+    # create directory for the data if it does not exist
+    beerFileName = config['beerName']
+    dataPath = util.addSlash(util.addSlash(config['scriptPath']) + 'data/' + beerFileName)
+    wwwDataPath = util.addSlash(util.addSlash(config['wwwPath']) + 'data/' + beerFileName)
+
+    if not os.path.exists(dataPath):
+        os.makedirs(dataPath)
+        os.chmod(dataPath, 0775)  # give group all permissions
+    if not os.path.exists(wwwDataPath):
+        os.makedirs(wwwDataPath)
+        os.chmod(wwwDataPath, 0775)  # give group all permissions
+
+    # Keep track of day and make new data file for each day
+    day = time.strftime("%Y-%m-%d")
+    lastDay = day
+    # define a JSON file to store the data
+    jsonFileName = beerFileName + '-' + day
+
+    #if a file for today already existed, add suffix
+    if os.path.isfile(dataPath + jsonFileName + '.json'):
+        i = 1
+        while os.path.isfile(dataPath + jsonFileName + '-' + str(i) + '.json'):
+            i += 1
+        jsonFileName = jsonFileName + '-' + str(i)
+
+    localJsonFileName = dataPath + jsonFileName + '.json'
+    brewpiJson.newEmptyFile(localJsonFileName)
+
+    # Define a location on the web server to copy the file to after it is written
+    wwwJsonFileName = wwwDataPath + jsonFileName + '.json'
+
+    # Define a CSV file to store the data as CSV (might be useful one day)
+    localCsvFileName = (dataPath + beerFileName + '.csv')
+    wwwCsvFileName = (wwwDataPath + beerFileName + '.csv')
+
+    # create new empty json file
+    brewpiJson.newEmptyFile(localJsonFileName)
+
+def startBeer(beerName):
     if config['dataLogging'] == 'active':
-        # create directory for the data if it does not exist
-        dataPath = util.addSlash(util.addSlash(config['scriptPath']) + 'data/' + beerName)
-        wwwDataPath = util.addSlash(util.addSlash(config['wwwPath']) + 'data/' + beerName)
-
-        if not os.path.exists(dataPath):
-            os.makedirs(dataPath)
-            os.chmod(dataPath, 0775)  # give group all permissions
-        if not os.path.exists(wwwDataPath):
-            os.makedirs(wwwDataPath)
-            os.chmod(wwwDataPath, 0775)  # give group all permissions
-
-        # Keep track of day and make new data file for each day
-        day = time.strftime("%Y-%m-%d")
-        lastDay = day
-        # define a JSON file to store the data
-        jsonFileName = config['beerName'] + '-' + day
-        #if a file for today already existed, add suffix
-        if os.path.isfile(dataPath + jsonFileName + '.json'):
-            i = 1
-            while os.path.isfile(dataPath + jsonFileName + '-' + str(i) + '.json'):
-                i += 1
-            jsonFileName = jsonFileName + '-' + str(i)
-        localJsonFileName = dataPath + jsonFileName + '.json'
-        brewpiJson.newEmptyFile(localJsonFileName)
-
-        # Define a location on the web server to copy the file to after it is written
-        wwwJsonFileName = wwwDataPath + jsonFileName + '.json'
-
-        # Define a CSV file to store the data as CSV (might be useful one day)
-        localCsvFileName = (dataPath + config['beerName'] + '.csv')
-        wwwCsvFileName = (wwwDataPath + config['beerName'] + '.csv')
+        setFiles()
 
     changeWwwSetting('beerName', beerName)
 
@@ -275,11 +284,11 @@ def startNewBrew(newName):
         config = util.configSet(configFile, 'dataLogging', 'active')
         startBeer(newName)
         logMessage("Notification: Restarted logging for beer '%s'." % newName)
-        return {'status': 0, 'statusMessage': "Successfully started switched to new brew '%s'. " % newName +
+        return {'status': 0, 'statusMessage': "Successfully switched to new brew '%s'. " % urllib.unquote(newName) +
                                               "Please reload the page."}
     else:
         return {'status': 1, 'statusMessage': "Invalid new brew name '%s', "
-                                              "please enter a name with at least 2 characters" % newName}
+                                              "please enter a name with at least 2 characters" % urllib.unquote(newName)}
 
 
 def stopLogging():
@@ -312,84 +321,36 @@ def resumeLogging():
     else:
         return {'status': 1, 'statusMessage': "Logging was not paused."}
 
+port = config['port']
+ser, conn = util.setupSerial(config)
 
-ser = None
-conn = None
-# open serial port
-try:
-    port = config['port']
-    ser = serial.Serial(port, 57600, timeout=0.1)  # use non blocking serial.
-except serial.SerialException as e:
-    logMessage("Error opening serial port: %s. Trying alternative serial port %s." % (str(e), config['altport']))
-    try:
-        port = config['altport']
-        ser = serial.Serial(port, 57600, timeout=0.1)  # use non blocking serial.
-    except serial.SerialException as e:
-        logMessage("Error opening alternative serial port: %s. Script will exit." % str(e))
-        exit(1)
-
-dumpSerial = config.get('dumpSerial', False)
-
-# yes this is monkey patching, but I don't see how to replace the methods on a dynamically instantiated type any other way
-if dumpSerial:
-    ser.readOriginal = ser.read
-    ser.writeOriginal = ser.write
-
-    def readAndDump(size=1):
-        r = ser.readOriginal(size)
-        sys.stdout.write(r)
-        return r
-
-    def writeAndDump(data):
-        ser.writeOriginal(data)
-        sys.stderr.write(data)
-    ser.read = readAndDump
-    ser.write = writeAndDump
-
-
-logMessage("Notification: Script started for beer '" + config['beerName'] + "'")
+logMessage("Notification: Script started for beer '" + urllib.unquote(config['beerName']) + "'")
 # wait for 10 seconds to allow an Uno to reboot (in case an Uno is being used)
 time.sleep(float(config.get('startupDelay', 10)))
 
 ser.flush()
-brewpiVersion = None
-retries = 0
 
-requestVersion = True
-while requestVersion:
-    for line in ser.readlines():
-        if line[0] == 'N':
-            data = line.strip('\n')[2:]
-            avrVersion = AvrInfo(data)
-            brewpiVersion = avrVersion.version
-            logMessage("Found Arduino " + str(avrVersion.board) +
-                       " with a " + str(avrVersion.shield) + " shield, " +
-                       "running BrewPi version " + str(brewpiVersion) +
-                       " build " + str(avrVersion.build))
-            if brewpiVersion != compatibleBrewpiVersion:
-                logMessage("Warning: BrewPi version compatible with this script is " +
-                           compatibleBrewpiVersion +
-                           " but version number received is " + brewpiVersion)
-            if int(avrVersion.log) != int(expandLogMessage.getVersion()):
-                logMessage("Warning: version number of local copy of logMessages.h " +
-                           "does not match log version number received from Arduino." +
-                           "Arduino version = " + str(avrVersion.log) +
-                           ", local copy version = " + str(expandLogMessage.getVersion()))
-            requestVersion = False
-            break
-    else:
-        ser.write('n')
-        time.sleep(1)
-        retries += 1
-        if retries > 10:
-            logMessage("Warning: Cannot receive version number from Arduino. " +
-                       "Your Arduino is either not programmed or running a very old version of BrewPi. " +
-                       "Please upload a new version of BrewPi to your Arduino.")
-            # script will continue so you can at least program the Arduino
-            lcdText = ['Could not receive', 'version from Arduino', 'Please (re)program', 'your Arduino']
-            break
+hwVersion = brewpiVersion.getVersionFromSerial(ser)
+if hwVersion is None:
+    logMessage("Warning: Cannot receive version number from Arduino. " +
+               "Your Arduino is either not programmed or running a very old version of BrewPi. " +
+               "Please upload a new version of BrewPi to your Arduino.")
+    # script will continue so you can at least program the Arduino
+    lcdText = ['Could not receive', 'version from Arduino', 'Please (re)program', 'your Arduino']
+else:
+    logMessage("Found " + hwVersion.toExtendedString() + \
+               " on port " + port + "\n")
+    if hwVersion.toString() != compatibleHwVersion:
+        logMessage("Warning: BrewPi version compatible with this script is " +
+                   compatibleHwVersion +
+                   " but version number received is " + hwVersion.toString())
+    if int(hwVersion.log) != int(expandLogMessage.getVersion()):
+        logMessage("Warning: version number of local copy of logMessages.h " +
+                   "does not match log version number received from Arduino." +
+                   "Arduino version = " + str(hwVersion.log) +
+                   ", local copy version = " + str(expandLogMessage.getVersion()))
 
-if brewpiVersion:
+if hwVersion is not None:
     ser.flush()
     # request settings from Arduino, processed later when reply is received
     ser.write('s')  # request control settings cs
@@ -460,12 +421,8 @@ while run:
         lastDay = day
         day = time.strftime("%Y-%m-%d")
         if lastDay != day:
-            logMessage("Notification: New day, dropping data table and creating new JSON file.")
-            jsonFileName = config['beerName'] + '/' + config['beerName'] + '-' + day
-            localJsonFileName = util.addSlash(config['scriptPath']) + 'data/' + jsonFileName + '.json'
-            wwwJsonFileName = util.addSlash(config['wwwPath']) + 'data/' + jsonFileName + '.json'
-            # create new empty json file
-            brewpiJson.newEmptyFile(localJsonFileName)
+            logMessage("Notification: New day, creating new JSON file.")
+            setFiles()
 
     # Wait for incoming socket connections.
     # When nothing is received, socket.timeout will be raised after
@@ -473,6 +430,7 @@ while run:
     # When messages are expected on serial, the timeout is raised 'manually'
     try:
         conn, addr = s.accept()
+        conn.setblocking(1)
         # blocking receive, times out in serialCheckInterval
         message = conn.recv(4096)
         if "=" in message:
@@ -681,10 +639,10 @@ while run:
                 ser.write("h{u:-1}")  # request available, but not installed devices
         elif messageType == "getDeviceList":
             if deviceList['listState'] in ["dh", "hd"]:
-                response = dict(board=avrVersion.board,
-                                shield=avrVersion.shield,
+                response = dict(board=hwVersion.board,
+                                shield=hwVersion.shield,
                                 deviceList=deviceList,
-                                pinList=pinList.getPinList(avrVersion.board, avrVersion.shield))
+                                pinList=pinList.getPinList(hwVersion.board, hwVersion.shield))
                 conn.send(json.dumps(response))
             else:
                 conn.send("device-list-not-up-to-date")
@@ -709,7 +667,7 @@ while run:
         # Do serial communication and update settings every SerialCheckInterval
         prevTimeOut = time.time()
 
-        if brewpiVersion is None:
+        if hwVersion is None:
             continue  # do nothing with the serial port when the arduino has not been recognized
 
         # request new LCD text

@@ -20,7 +20,7 @@ import serial
 import time
 import simplejson as json
 import os
-from brewpiVersion import AvrInfo
+import brewpiVersion
 import expandLogMessage
 import settingRestore
 from sys import stderr
@@ -96,37 +96,21 @@ def programArduino(config, boardType, hexFile, restoreWhat):
 
     printStdErr("Checking old version before programming.")
 
-    avrVersionOld = None
-
-    retries = 0
-    requestVersion = True
-    while requestVersion:
-        for line in ser:
-            if line[0] == 'N':
-                data = line.strip('\n')[2:]
-                avrVersionOld = AvrInfo(data)
-                printStdErr("Found Arduino " + str(avrVersionOld.board) +
-                            " with a " + str(avrVersionOld.shield) + " shield, " +
-                            "running BrewPi version " + str(avrVersionOld.version) +
-                            " build " + str(avrVersionOld.build) +
-                            " on port " + port + "\n")
-                requestVersion = False
-                break
-        else:
-            ser.write('n')  # request version info
-            time.sleep(1)
-            retries += 1
-            if retries > 10:
-                printStdErr(("Warning: Cannot receive version number from Arduino. " +
-                             "Your Arduino is either not programmed yet or running a very old version of BrewPi. "
-                             "Arduino will be reset to defaults."))
-                break
+    avrVersionOld = brewpiVersion.getVersionFromSerial(ser)
+    if avrVersionOld is None:
+        printStdErr(("Warning: Cannot receive version number from Arduino. " +
+                     "Your Arduino is either not programmed yet or running a very old version of BrewPi. "
+                     "Arduino will be reset to defaults."))
+    else:
+        printStdErr("Found " + avrVersionOld.toExtendedString() + \
+                    " on port " + port + "\n")
 
     oldSettings = {}
 
-    printStdErr("Requesting old settings from Arduino...")
+
     # request all settings from board before programming
     if avrVersionOld is not None:
+        printStdErr("Requesting old settings from Arduino...")
         if avrVersionOld.minor > 1:  # older versions did not have a device manager
             ser.write("d{}")  # installed devices
             time.sleep(1)
@@ -134,33 +118,31 @@ def programArduino(config, boardType, hexFile, restoreWhat):
         ser.write("s")  # control settings
         time.sleep(2)
 
-    for line in ser:
-        try:
-            if line[0] == 'C':
-                oldSettings['controlConstants'] = json.loads(line[2:])
-            elif line[0] == 'S':
-                oldSettings['controlSettings'] = json.loads(line[2:])
-            elif line[0] == 'd':
-                oldSettings['installedDevices'] = json.loads(line[2:])
+        for line in ser:
+            try:
+                if line[0] == 'C':
+                    oldSettings['controlConstants'] = json.loads(line[2:])
+                elif line[0] == 'S':
+                    oldSettings['controlSettings'] = json.loads(line[2:])
+                elif line[0] == 'd':
+                    oldSettings['installedDevices'] = json.loads(line[2:])
 
-        except json.decoder.JSONDecodeError, e:
-            printStdErr("JSON decode error: " + str(e))
-            printStdErr("Line received was: " + line)
+            except json.decoder.JSONDecodeError, e:
+                printStdErr("JSON decode error: " + str(e))
+                printStdErr("Line received was: " + line)
 
-    ser.close()
-    del ser  # Arduino won't reset when serial port is not completely removed
-    oldSettingsFileName = 'oldAvrSettings-' + time.strftime("%b-%d-%Y-%H-%M-%S") + '.json'
-    printStdErr("Saving old settings to file " + oldSettingsFileName)
+        oldSettingsFileName = 'oldAvrSettings-' + time.strftime("%b-%d-%Y-%H-%M-%S") + '.json'
+        printStdErr("Saving old settings to file " + oldSettingsFileName)
 
-    scriptDir = util.scriptPath()  # <-- absolute dir the script is in
-    if not os.path.exists(scriptDir + '/settings/avr-backup/'):
-        os.makedirs(scriptDir + '/settings/avr-backup/')
+        scriptDir = util.scriptPath()  # <-- absolute dir the script is in
+        if not os.path.exists(scriptDir + '/settings/avr-backup/'):
+            os.makedirs(scriptDir + '/settings/avr-backup/')
 
-    oldSettingsFile = open(scriptDir + '/settings/avr-backup/' + oldSettingsFileName, 'wb')
-    oldSettingsFile.write(json.dumps(oldSettings))
+        oldSettingsFile = open(scriptDir + '/settings/avr-backup/' + oldSettingsFileName, 'wb')
+        oldSettingsFile.write(json.dumps(oldSettings))
 
-    oldSettingsFile.truncate()
-    oldSettingsFile.close()
+        oldSettingsFile.truncate()
+        oldSettingsFile.close()
 
     printStdErr("Loading programming settings from board.txt")
 
@@ -210,6 +192,8 @@ def programArduino(config, boardType, hexFile, restoreWhat):
 
     # open and close serial port at 1200 baud. This resets the Arduino Leonardo
     # the Arduino Uno resets every time the serial port is opened automatically
+    ser.close()
+    del ser  # Arduino won't reset when serial port is not completely removed
     if boardType == 'leonardo':
         ser, port = openSerial(config['port'], config['altport'], 1200, 0.2)
         if ser is None:
@@ -242,28 +226,14 @@ def programArduino(config, boardType, hexFile, restoreWhat):
     printStdErr("Now checking which settings and devices can be restored...")
 
     # read new version
-    avrVersionNew = None
-    retries = 0
-    requestVersion = True
-    while requestVersion:
-        for line in ser:
-            if line[0] == 'N':
-                data = line.strip('\n')[2:]
-                avrVersionNew = AvrInfo(data)
-                printStdErr("Checking new version: Found Arduino " + avrVersionNew.board +
-                            " with a " + str(avrVersionNew.shield) + " shield, " +
-                            "running BrewPi version " + str(avrVersionNew.version) +
-                            " build " + str(avrVersionNew.build) +
-                            " on port " + port + "\n")
-                requestVersion = False
-                break
-
-        else:
-            ser.write('n')  # request version info
-            time.sleep(1)
-            retries += 1
-            if retries > 10:
-                break
+    avrVersionNew = brewpiVersion.getVersionFromSerial(ser)
+    if avrVersionNew is None:
+        printStdErr(("Warning: Cannot receive version number from Arduino. " +
+                     "Your Arduino is either not programmed yet or running a very old version of BrewPi. "
+                     "Arduino will be reset to defaults."))
+    else:
+        printStdErr("Checking new version: Found " + avrVersionNew.toExtendedString() +
+                    " on port " + port + "\n")
 
     printStdErr("Resetting EEPROM to default settings")
     ser.write('E')
@@ -321,6 +291,13 @@ def programArduino(config, boardType, hexFile, restoreWhat):
                         settingsRestoreLookupDict = settingRestore.keys_0_2_x_to_0_2_2
                     elif avrVersionNew.revision == 3:
                         settingsRestoreLookupDict = settingRestore.keys_0_2_x_to_0_2_3
+                    elif avrVersionNew.revision == 4:
+                        if avrVersionOld.revision >= 3:
+                            settingsRestoreLookupDict = settingRestore.keys_0_2_3_to_0_2_4
+                        else:
+                            settingsRestoreLookupDict = settingRestore.keys_0_2_x_to_0_2_4
+
+
                     printStdErr("Will try to restore compatible settings")
         else:
             printStdErr("Sorry, settings can only be restored when updating to BrewPi 0.2.0 or higher")
@@ -353,7 +330,7 @@ def programArduino(config, boardType, hexFile, restoreWhat):
                         except Exception, e:  # catch all exceptions, because out of date file could cause errors
                             printStdErr("Error while expanding log message: " + str(e))
                             printStdErr("Arduino debug message: " + line[2:])
-                except json.decoder.JSONDecodeError, e:
+                except json.JSONDecodeError, e:
                         printStdErr("JSON decode error: " + str(e))
                         printStdErr("Line received was: " + line)
             else:
@@ -410,8 +387,29 @@ def programArduino(config, boardType, hexFile, restoreWhat):
 
     if restoreDevices:
         printStdErr("Now trying to restore previously installed devices: " + str(oldSettings['installedDevices']))
+        detectedDevices = None
         for device in oldSettings['installedDevices']:
             printStdErr("Restoring device: " + json.dumps(device))
+            if "a" in device.keys(): # check for sensors configured as first on bus
+                if(int(device['a'], 16) == 0 ):
+                    printStdErr("OneWire sensor was configured to autodetect the first sensor on the bus, " +
+                                "but this is no longer supported. " +
+                                "We'll attempt to automatically find the address and add the sensor based on its address")
+                    if detectedDevices is None:
+                        ser.write("h{}")  # installed devices
+                        time.sleep(1)
+                        # get list of detected devices
+                        for line in ser:
+                            try:
+                                if line[0] == 'h':
+                                    detectedDevices = json.loads(line[2:])
+                            except json.decoder.JSONDecodeError, e:
+                                printStdErr("JSON decode error: " + str(e))
+                                printStdErr("Line received was: " + line)
+                    for detectedDevice in detectedDevices:
+                        if device['p'] == detectedDevice['p']:
+                            device['a'] = detectedDevice['a'] # get address from sensor that was first on bus
+
             ser.write("U" + json.dumps(device))
 
             time.sleep(3)  # give the Arduino time to respond

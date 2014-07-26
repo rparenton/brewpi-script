@@ -58,9 +58,11 @@ class BrewPiProcess:
                 conn.send('quit')
                 conn.close()  # do not shutdown the socket, other processes are still connected to it.
                 print "Quit message sent to BrewPi instance with pid %s!" % self.pid
+                return True
             else:
                 print "Could not connect to socket of BrewPi process, maybe it just started and is not listening yet."
                 print "Could not send quit message to BrewPi instance with pid %d!" % self.pid
+                return False
 
     def kill(self):
         """
@@ -78,11 +80,14 @@ class BrewPiProcess:
         if self.pid == otherProcess.pid:
             return 0  # this is me! I don't have a conflict with myself
         if otherProcess.cfg == self.cfg:
+            print "Conflict: same config file as another BrewPi instance already running."
             return 1
         if otherProcess.port == self.port:
+            print "Conflict: same serial port as another BrewPi instance already running."
             return 1
         if [otherProcess.sock.type, otherProcess.sock.file, otherProcess.sock.host, otherProcess.sock.port] == \
                 [self.sock.type, self.sock.file, self.sock.host, self.sock.port]:
+            print "Conflict: same socket as another BrewPi instance already running."
             return 1
         return 0
 
@@ -179,6 +184,23 @@ class BrewPiProcesses():
         """
         Ask all running BrewPi processes to exit
         """
+        myPid = os.getpid()
+        self.update()
+        for p in self.list:
+            if p.pid == myPid:  # do not send quit message to myself
+                continue
+            else:
+                p.quit()
+    def stopAll(self, dontRunFilePath):
+        """
+        Ask all running Brewpi processes to exit, and prevent restarting by writing
+        the do_not_run file
+        """
+        if not os.path.exists(dontRunFilePath):
+            # if do not run file does not exist, create it
+            dontrunfile = open(dontRunFilePath, "w")
+            dontrunfile.write("1")
+            dontrunfile.close()
         myPid = os.getpid()
         self.update()
         for p in self.list:
